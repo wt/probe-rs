@@ -155,6 +155,7 @@ impl CMSISDAP {
     ///
     /// This will ensure any pending writes are processed and errors from them
     /// raised if necessary.
+    #[tracing::instrument(skip(self))]
     fn process_batch(&mut self) -> Result<u32, DebugProbeError> {
         if self.batch.is_empty() {
             return Ok(0);
@@ -611,11 +612,13 @@ impl DebugProbe for CMSISDAP {
 
 impl DAPAccess for CMSISDAP {
     /// Reads the DAP register on the specified port and address.
+    #[tracing::instrument(skip(self))]
     fn read_register(&mut self, port: PortType, addr: u16) -> Result<u32, DebugProbeError> {
         self.batch_add(BatchCommand::Read(port, addr))
     }
 
     /// Writes a value to the DAP register on the specified port and address.
+    #[tracing::instrument(skip(self))]
     fn write_register(
         &mut self,
         port: PortType,
@@ -626,6 +629,7 @@ impl DAPAccess for CMSISDAP {
             .map(|_| ())
     }
 
+    #[tracing::instrument(skip(self, values))]
     fn write_block(
         &mut self,
         port: PortType,
@@ -668,6 +672,7 @@ impl DAPAccess for CMSISDAP {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, values))]
     fn read_block(
         &mut self,
         port: PortType,
@@ -712,6 +717,7 @@ impl DAPAccess for CMSISDAP {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     fn flush(&mut self) -> Result<(), DebugProbeError> {
         self.process_batch()?;
         Ok(())

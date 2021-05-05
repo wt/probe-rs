@@ -221,6 +221,7 @@ where
     ///
     /// The address where the read should be performed at has to be word aligned.
     /// Returns `AccessPortError::MemoryNotAligned` if this does not hold true.
+    #[tracing::instrument(skip(self))]
     pub fn read_word_32(
         &mut self,
         access_port: MemoryAP,
@@ -242,6 +243,7 @@ where
     }
 
     /// Read an 8bit word at `addr`.
+    #[tracing::instrument(skip(self))]
     pub fn read_word_8(
         &mut self,
         access_port: MemoryAP,
@@ -275,6 +277,7 @@ where
     /// The number of words read is `data.len()`.
     /// The address where the read should be performed at has to be word aligned.
     /// Returns `AccessPortError::MemoryNotAligned` if this does not hold true.
+    #[tracing::instrument(skip(self, data))]
     pub fn read_32(
         &mut self,
         access_port: MemoryAP,
@@ -362,6 +365,7 @@ where
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, data))]
     pub fn read_8(
         &mut self,
         access_port: MemoryAP,
@@ -395,6 +399,7 @@ where
     ///
     /// The address where the write should be performed at has to be word aligned.
     /// Returns `AccessPortError::MemoryNotAligned` if this does not hold true.
+    #[tracing::instrument(skip(self))]
     pub fn write_word_32(
         &mut self,
         access_port: MemoryAP,
@@ -417,6 +422,7 @@ where
     }
 
     /// Write an 8bit word at `addr`.
+    #[tracing::instrument(skip(self))]
     pub fn write_word_8(
         &mut self,
         access_port: MemoryAP,
@@ -455,6 +461,7 @@ where
     /// The number of words written is `data.len()`.
     /// The address where the write should be performed at has to be word aligned.
     /// Returns `AccessPortError::MemoryNotAligned` if this does not hold true.
+    #[tracing::instrument(skip(self, data))]
     pub fn write_32(
         &mut self,
         access_port: MemoryAP,
@@ -552,6 +559,7 @@ where
     /// Write a block of 8bit words at `addr`.
     ///
     /// The number of words written is `data.len()`.
+    #[tracing::instrument(skip(self, data))]
     pub fn write_8(
         &mut self,
         access_port: MemoryAP,

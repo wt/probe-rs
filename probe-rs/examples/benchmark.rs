@@ -1,4 +1,5 @@
 use probe_rs::{config::TargetSelector, MemoryInterface, Probe, WireProtocol};
+use tracing_flame::FlameLayer;
 
 use std::{env, num::ParseIntError, time::SystemTime};
 use std::{
@@ -8,6 +9,11 @@ use std::{
 
 use rand::prelude::*;
 use structopt::StructOpt;
+
+use tracing::Level;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+use anyhow::{anyhow, bail, Context, Result};
 
 #[derive(StructOpt)]
 struct CLI {
@@ -21,6 +27,8 @@ struct CLI {
     protocol: Option<String>,
     #[structopt(long = "pr")]
     pr: Option<u64>,
+    #[structopt(long = "upload")]
+    upload: bool,
 }
 
 fn parse_hex(src: &str) -> Result<u32, ParseIntError> {
@@ -29,54 +37,40 @@ fn parse_hex(src: &str) -> Result<u32, ParseIntError> {
 
 const SIZE: usize = 0x1000;
 
-fn main() -> Result<(), &'static str> {
-    pretty_env_logger::init();
-
-    let matches = CLI::from_args();
-
+fn run_benchmark(
+    matches: &CLI,
+    protocol: &WireProtocol,
+    target_selector: &TargetSelector,
+    speed: u32,
+) -> Result<()> {
     let mut probe = open_probe(None)?;
-
-    let target_selector = match matches.chip.clone() {
-        Some(identifier) => identifier.into(),
-        None => TargetSelector::Auto,
-    };
-
-    let protocol = match matches.protocol {
-        Some(protocol) => protocol.parse().map_err(|_| "Unknown protocol")?,
-        None => WireProtocol::Swd,
-    };
 
     let protocol_name = format!("{}", protocol.clone());
 
     probe
-        .select_protocol(protocol)
-        .map_err(|_| "Failed to select SWD as the transport protocol")?;
+        .select_protocol(protocol.clone())
+        .context("Failed to select SWD as the transport protocol")?;
 
-    let protocol_speed = if let Some(speed) = matches.speed {
-        let protocol_speed = probe
-            .set_speed(speed)
-            .map_err(|_| "Failed to set probe speed")?;
-        protocol_speed
-    } else {
-        let protocol_speed = probe
-            .set_speed(10000)
-            .map_err(|_| "Failed to set probe speed")?;
-        protocol_speed
-    } as i32;
+    let protocol_speed = probe
+        .set_speed(speed)
+        .context("Failed to set probe speed")?;
 
     if ![100, 1000, 10000, 50000].contains(&protocol_speed) {
-        return Err("Speed must be in [100, 1000, 10000, 50000] KHz");
+        bail!(
+            "Speed must be in [100, 1000, 10000, 50000] KHz, but current speed is {}",
+            protocol_speed
+        );
     }
 
     let probe_name = probe.get_name();
 
     let mut session = probe
-        .attach(target_selector)
-        .map_err(|_| "Failed to attach probe to target")?;
+        .attach(target_selector.clone())
+        .context("Failed to attach probe to target")?;
 
     let chip_name = session.target().name.clone();
 
-    let mut core = session.core(0).map_err(|_| "Failed to attach to core")?;
+    let mut core = session.core(0).context("Failed to attach to core")?;
 
     let data_size_words = SIZE;
 
@@ -90,6 +84,8 @@ fn main() -> Result<(), &'static str> {
 
     core.halt(Duration::from_millis(100))
         .expect("Halting failed");
+
+    let bench_span = tracing::span!(Level::INFO, "benchmark").entered();
 
     let write_start = Instant::now();
     core.write_32(matches.address, &sample_data)
@@ -113,6 +109,9 @@ fn main() -> Result<(), &'static str> {
     let read_start = Instant::now();
     core.read_32(matches.address, &mut readback_data)
         .expect("Reading the sample data failed");
+
+    bench_span.exit();
+
     let read_duration = read_start.elapsed();
 
     let read_throughput = (data_size_bytes as f32) / read_duration.as_secs_f32();
@@ -140,56 +139,131 @@ fn main() -> Result<(), &'static str> {
         }
     } else {
         println!("Verification succesful.");
-        let start = SystemTime::now();
-        let since_the_epoch = start
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_secs();
 
-        let commit_hash = String::from_utf8_lossy(
-            &Command::new("git")
-                .args(&["rev-parse", "--short", "HEAD"])
+        if matches.upload {
+            let start = SystemTime::now();
+            let since_the_epoch = start
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs();
+
+            let commit_hash = String::from_utf8_lossy(
+                &Command::new("git")
+                    .args(&["rev-parse", "--short", "HEAD"])
+                    .output()
+                    .unwrap()
+                    .stdout,
+            )
+            .trim()
+            .to_string();
+
+            let commit_name = if Command::new("git")
+                .args(&["diff-index", "--quiet", "HEAD", "--"])
                 .output()
                 .unwrap()
-                .stdout,
-        )
-        .trim()
-        .to_string();
-
-        let commit_name = if Command::new("git")
-            .args(&["diff-index", "--quiet", "HEAD", "--"])
-            .output()
-            .unwrap()
-            .status
-            .success()
-        {
-            commit_hash
-        } else {
-            commit_hash + "-changed"
-        };
-
-        let client = reqwest::blocking::Client::new();
-        const BASE_URL: &str = "https://perf.probe.rs/add";
-        client
-            .post(&if let Some(pr) = matches.pr {
-                format!("{}?pr={}", BASE_URL, pr)
+                .status
+                .success()
+            {
+                commit_hash
             } else {
-                BASE_URL.to_string()
-            })
-            .json(&NewLog {
-                probe: probe_name,
-                chip: chip_name,
-                os: env::consts::OS.to_string(),
-                protocol: protocol_name,
-                protocol_speed: protocol_speed,
-                commit_hash: commit_name,
-                timestamp: NaiveDateTime::from_timestamp(since_the_epoch as i64, 0),
-                kind: "ram".into(),
-                read_speed: read_throughput as i32,
-                write_speed: write_throughput as i32,
-            })
-            .send()
-            .unwrap();
+                commit_hash + "-changed"
+            };
+
+            let client = reqwest::blocking::Client::new();
+            const BASE_URL: &str = "https://perf.probe.rs/add";
+            client
+                .post(&if let Some(pr) = matches.pr {
+                    format!("{}?pr={}", BASE_URL, pr)
+                } else {
+                    BASE_URL.to_string()
+                })
+                .json(&NewLog {
+                    probe: probe_name,
+                    chip: chip_name,
+                    os: env::consts::OS.to_string(),
+                    protocol: protocol_name,
+                    commit_hash: commit_name,
+                    timestamp: NaiveDateTime::from_timestamp(since_the_epoch as i64, 0),
+
+                    protocol_speed: protocol_speed as i32,
+
+                    kind: "ram".into(),
+                    read_speed: read_throughput as i32,
+                    write_speed: write_throughput as i32,
+                })
+                .send()
+                .unwrap();
+        }
+    }
+
+    Ok(())
+}
+
+// Benchmark ideas:
+//
+// read_8       / write_8
+// read_32      / write_32
+//
+//
+// read_register           / write_register
+// read_register multiple  / write_register multiple
+//
+// flashing (divided into erase / program ?)
+//
+//
+// Measurements:
+// - wall time / elapsed time
+//   influenced by:
+//     - USB
+//     - protocol speed
+//     - target HW
+//     - PC load?
+//
+// - number of SWD transfers  (how efficient is the transfer generation / xxxx / caching?)  ??? how to measure ???
+// - number of USB transfers  (batching / probe usage)                                      ??? how to measure ???
+//
+
+fn setup_global_subscriber() -> impl Drop {
+    let mut fmt_layer = fmt::Layer::default();
+
+    let filter_layer = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
+
+    let (flame_layer, _guard) = FlameLayer::with_file("./tracing.folded").unwrap();
+
+    tracing_subscriber::registry()
+        .with(flame_layer)
+        .with(filter_layer)
+        .with(fmt_layer)
+        .init();
+
+    _guard
+}
+
+fn main() -> Result<()> {
+    // pretty_env_logger::init();
+    let _guard = setup_global_subscriber();
+
+    let matches = CLI::from_args();
+
+    let target_selector = match &matches.chip {
+        Some(identifier) => identifier.into(),
+        None => TargetSelector::Auto,
+    };
+
+    let protocol = match &matches.protocol {
+        Some(protocol) => protocol.parse().map_err(|e: String| anyhow!(e))?,
+        None => WireProtocol::Swd,
+    };
+
+    // let speeds = [100, 1000, 10_000, 50_000];
+    let speeds = [10_000];
+
+    for speed in &speeds {
+        println!("Probe Speed: {} kHz", speed);
+
+        run_benchmark(&matches, &protocol, &target_selector, *speed)?;
     }
 
     Ok(())
@@ -233,27 +307,27 @@ pub struct NewLog {
     pub write_speed: i32,
 }
 
-fn open_probe(index: Option<usize>) -> Result<Probe, &'static str> {
+fn open_probe(index: Option<usize>) -> Result<Probe> {
     let list = Probe::list_all();
 
     let device = match index {
         Some(index) => list
             .get(index)
-            .ok_or("Probe with specified index not found")?,
+            .ok_or(anyhow!("Probe with index {} not found", index))?,
         None => {
             // open the default probe, if only one probe was found
-            if list.len() == 1 {
-                &list[0]
-            } else {
-                return Err("No probe found.");
+            match list.len() {
+                0 => bail!("No probe found."),
+                1 => &list[0],
+                n => bail!(
+                    "Found {} probes, unable to automatically select a probe.",
+                    n
+                ),
             }
         }
     };
 
-    let probe = device.open().map_err(|e| {
-        println!("{}", e);
-        "Failed to open probe"
-    })?;
+    let probe = device.open().context("Failed to open probe")?;
 
     Ok(probe)
 }

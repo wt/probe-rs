@@ -66,7 +66,6 @@ pub(crate) enum RegisterKind {
 }
 
 /// Register description for a core.
-
 #[derive(Debug)]
 pub struct RegisterFile {
     pub(crate) platform_registers: &'static [RegisterDescription],
@@ -396,6 +395,7 @@ impl<'probe> Core<'probe> {
         self.inner.enable_breakpoints(state)
     }
 
+    /// Get the available registers for this core.
     pub fn registers(&self) -> &'static RegisterFile {
         self.inner.registers()
     }

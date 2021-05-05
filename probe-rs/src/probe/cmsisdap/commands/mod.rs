@@ -67,6 +67,7 @@ pub enum CMSISDAPDevice {
 
 impl CMSISDAPDevice {
     /// Read from the probe into `buf`, returning the number of bytes read on success.
+    #[tracing::instrument(skip(self))]
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
         match self {
             CMSISDAPDevice::V1 { handle, .. } => Ok(handle.read_timeout(buf, 100)?),
@@ -78,6 +79,7 @@ impl CMSISDAPDevice {
     }
 
     /// Write `buf` to the probe, returning the number of bytes written on success.
+    #[tracing::instrument(skip(self))]
     fn write(&self, buf: &[u8]) -> Result<usize> {
         match self {
             CMSISDAPDevice::V1 { handle, .. } => Ok(handle.write(buf)?),
@@ -89,6 +91,7 @@ impl CMSISDAPDevice {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub(super) fn drain(&self) {
         log::debug!("Draining probe of any pending data.");
 
@@ -198,6 +201,7 @@ pub(crate) trait Response: Sized {
     fn from_bytes(buffer: &[u8], offset: usize) -> Result<Self>;
 }
 
+#[tracing::instrument(skip(device, request))]
 pub(crate) fn send_command<Req: Request, Res: Response>(
     device: &mut CMSISDAPDevice,
     request: Req,
