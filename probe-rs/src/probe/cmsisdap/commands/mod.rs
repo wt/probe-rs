@@ -67,7 +67,7 @@ pub enum CMSISDAPDevice {
 
 impl CMSISDAPDevice {
     /// Read from the probe into `buf`, returning the number of bytes read on success.
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, buf))]
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
         match self {
             CMSISDAPDevice::V1 { handle, .. } => Ok(handle.read_timeout(buf, 100)?),
@@ -79,7 +79,7 @@ impl CMSISDAPDevice {
     }
 
     /// Write `buf` to the probe, returning the number of bytes written on success.
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, buf))]
     fn write(&self, buf: &[u8]) -> Result<usize> {
         match self {
             CMSISDAPDevice::V1 { handle, .. } => Ok(handle.write(buf)?),

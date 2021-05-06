@@ -233,9 +233,9 @@ fn setup_global_subscriber() -> impl Drop {
     let (flame_layer, _guard) = FlameLayer::with_file("./tracing.folded").unwrap();
 
     tracing_subscriber::registry()
-        .with(flame_layer)
         .with(filter_layer)
         .with(fmt_layer)
+        .with(flame_layer)
         .init();
 
     _guard
