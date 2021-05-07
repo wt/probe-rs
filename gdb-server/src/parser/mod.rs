@@ -11,7 +11,9 @@ use nom::{
     bytes::complete::{tag, take},
     character::complete::char,
     combinator::value,
-    map, named,
+    map,
+    multi::many0,
+    named,
     number::complete::hex_u32,
     IResult,
 };
@@ -21,7 +23,7 @@ use query::query_packet;
 use v_packet::v_packet;
 
 pub use query::{Pid, QueryPacket};
-use util::hex_u64;
+use util::{hex_u32_le, hex_u64};
 pub use v_packet::VPacket;
 
 #[allow(dead_code)]
@@ -58,7 +60,9 @@ pub enum Packet {
     /// Packet `g`
     ReadGeneralRegister,
     /// Packet `G`
-    WriteGeneralRegister,
+    WriteGeneralRegister {
+        reg_values: Vec<u32>,
+    },
     /// Packet `H`
     SelectThread,
     /// Packet `i`
@@ -77,7 +81,10 @@ pub enum Packet {
     /// Packet 'p'
     ReadRegisterHex(u32),
     /// Packet 'P'
-    WriteRegisterHex,
+    WriteRegisterHex {
+        address: u32,
+        value: u32,
+    },
     // Packet 'q'
     Query(QueryPacket),
     // Packet 'Q'
@@ -141,6 +148,8 @@ pub fn parse_packet(input: &[u8]) -> Result<Packet> {
         write_memory_binary,
         ctrl_c_interrupt,
         continue_packet,
+        write_register,
+        write_register_hex,
     ))(input);
 
     match parse_result {
@@ -175,6 +184,28 @@ fn read_register_hex(input: &[u8]) -> IResult<&[u8], Packet> {
     let (input, value) = hex_u32(input)?;
 
     Ok((input, Packet::ReadRegisterHex(value)))
+}
+
+fn write_register(input: &[u8]) -> IResult<&[u8], Packet> {
+    let (input, _) = char('G')(input)?;
+
+    // TODO: Handle target byteorder correctly
+    let (input, v) = many0(hex_u32_le)(input)?;
+
+    Ok((input, Packet::WriteGeneralRegister { reg_values: v }))
+}
+
+fn write_register_hex(input: &[u8]) -> IResult<&[u8], Packet> {
+    let (input, _) = char('P')(input)?;
+
+    let (input, address) = hex_u32(input)?;
+
+    let (input, _) = char('=')(input)?;
+
+    // TODO: Handle target byteorder correctly
+    let (input, value) = hex_u32_le(input)?;
+
+    Ok((input, Packet::WriteRegisterHex { address, value }))
 }
 
 fn query(input: &[u8]) -> IResult<&[u8], Packet> {
